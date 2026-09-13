@@ -1,11 +1,18 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/network_helper.dart';
+import '../../core/utils/permission_helper.dart';
 import '../../models/call_model.dart';
 import '../../models/user_model.dart';
 import '../../services/auth_service.dart';
+import '../../services/call_signaling_service.dart';
 import '../../services/calling_service.dart';
 import '../../services/user_service.dart';
 import '../../widgets/user_tile.dart';
+import '../call/audio_calling_screen.dart';
+import '../call/incoming_call_screen.dart';
+import '../call/video_calling_screen.dart';
 import '../contacts/contacts_screen.dart';
 import '../history/call_history_screen.dart';
 import '../profile/profile_screen.dart';
@@ -19,6 +26,46 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
+  final AuthService _authService = AuthService();
+  final CallSignalingService _callSignalingService = CallSignalingService();
+  StreamSubscription<CallModel?>? _incomingCallSub;
+  bool _isIncomingShowing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _listenForIncomingCalls();
+  }
+
+  void _listenForIncomingCalls() {
+    final currentUserId = _authService.currentFirebaseUser?.uid;
+    if (currentUserId == null) return;
+
+    _incomingCallSub = _callSignalingService
+        .listenForIncomingCalls(currentUserId)
+        .listen((incomingCall) {
+      if (incomingCall != null &&
+          incomingCall.status == CallStatus.calling &&
+          !_isIncomingShowing &&
+          mounted) {
+        _isIncomingShowing = true;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => IncomingCallScreen(call: incomingCall),
+          ),
+        ).then((_) {
+          _isIncomingShowing = false;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _incomingCallSub?.cancel();
+    super.dispose();
+  }
 
   void _onNavigateToTab(int index) {
     setState(() {
@@ -91,6 +138,7 @@ class _HomeFeedViewState extends State<HomeFeedView> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   UserModel? _currentUserProfile;
+  bool _isStartingCall = false;
 
   @override
   void initState() {
@@ -113,15 +161,146 @@ class _HomeFeedViewState extends State<HomeFeedView> {
     }
   }
 
-  void _showCallingNotice(String type) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$type calling will be enabled in the calling module.'),
-        duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+  Future<void> _startAudioCall(UserModel receiver) async {
+    if (_isStartingCall) return;
+    setState(() => _isStartingCall = true);
+
+    try {
+      final hasInternet = await NetworkHelper.hasInternetConnection();
+      if (!hasInternet) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No internet connection. Please check your network and try again.'),
+              backgroundColor: AppTheme.errorColor,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      final permResult = await PermissionHelper.checkAndRequestCallPermissions(isVideo: false);
+      if (!permResult.isGranted) {
+        if (mounted) {
+          PermissionHelper.handlePermissionResult(context, permResult);
+        }
+        return;
+      }
+
+      final caller = _authService.currentUser;
+      if (caller == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Please log in to start a call.')),
+          );
+        }
+        return;
+      }
+
+      final callDoc = await CallSignalingService().initiateCall(
+        caller: caller,
+        receiver: receiver,
+        type: CallType.audio,
+      );
+
+      if (!mounted) return;
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AudioCallingScreen(
+            call: callDoc,
+            isCaller: true,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to start call: $e'),
+          backgroundColor: AppTheme.errorColor,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isStartingCall = false);
+      }
+    }
   }
+
+  Future<void> _startVideoCall(UserModel receiver) async {
+    if (_isStartingCall) return;
+    setState(() => _isStartingCall = true);
+
+    try {
+      final hasInternet = await NetworkHelper.hasInternetConnection();
+      if (!hasInternet) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No internet connection. Please check your network and try again.'),
+              backgroundColor: AppTheme.errorColor,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      final permResult = await PermissionHelper.checkAndRequestCallPermissions(isVideo: true);
+      if (!permResult.isGranted) {
+        if (mounted) {
+          PermissionHelper.handlePermissionResult(context, permResult);
+        }
+        return;
+      }
+
+      final caller = _authService.currentUser;
+      if (caller == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Please log in to start a call.')),
+          );
+        }
+        return;
+      }
+
+      final callDoc = await CallSignalingService().initiateCall(
+        caller: caller,
+        receiver: receiver,
+        type: CallType.video,
+      );
+
+      if (!mounted) return;
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => VideoCallingScreen(
+            call: callDoc,
+            isCaller: true,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to start video call: $e'),
+          backgroundColor: AppTheme.errorColor,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isStartingCall = false);
+      }
+    }
+  }
+
 
   String _formatTimestamp(DateTime dt) {
     final now = DateTime.now();
@@ -357,7 +536,7 @@ class _HomeFeedViewState extends State<HomeFeedView> {
                             itemBuilder: (context, index) {
                               final onlineUser = onlineUsers[index];
                               return InkWell(
-                                onTap: () => _showCallingNotice('Video'),
+                                onTap: () => _startAudioCall(onlineUser),
                                 borderRadius: BorderRadius.circular(12),
                                 child: Column(
                                   children: [
@@ -485,8 +664,8 @@ class _HomeFeedViewState extends State<HomeFeedView> {
                               final user = filteredUsers[index];
                               return UserTile(
                                 user: user,
-                                onAudioCall: () => _showCallingNotice('Audio'),
-                                onVideoCall: () => _showCallingNotice('Video'),
+                                onAudioCall: _isStartingCall ? null : () => _startAudioCall(user),
+                                onVideoCall: _isStartingCall ? null : () => _startVideoCall(user),
                               );
                             },
                           ),
@@ -627,9 +806,19 @@ class _HomeFeedViewState extends State<HomeFeedView> {
                               size: 20,
                               color: AppTheme.primaryColor,
                             ),
-                            onPressed: () => _showCallingNotice(
-                              isVideo ? 'Video' : 'Audio',
-                            ),
+                            onPressed: () {
+                              final target = UserModel(
+                                id: isOutgoing ? call.receiverId : call.callerId,
+                                name: otherParty,
+                                email: '',
+                                avatarUrl: isOutgoing ? call.receiverAvatar : call.callerAvatar,
+                              );
+                              if (isVideo) {
+                                _startVideoCall(target);
+                              } else {
+                                _startAudioCall(target);
+                              }
+                            },
                           ),
                         );
                       },

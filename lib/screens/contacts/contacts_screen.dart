@@ -1,8 +1,15 @@
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
+import '../../core/utils/network_helper.dart';
+import '../../core/utils/permission_helper.dart';
+import '../../models/call_model.dart';
 import '../../models/user_model.dart';
 import '../../services/auth_service.dart';
+import '../../services/call_signaling_service.dart';
 import '../../services/user_service.dart';
 import '../../widgets/user_tile.dart';
+import '../call/audio_calling_screen.dart';
+import '../call/video_calling_screen.dart';
 
 class ContactsScreen extends StatefulWidget {
   const ContactsScreen({super.key});
@@ -16,6 +23,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
   final AuthService _authService = AuthService();
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  bool _isStartingCall = false;
 
   @override
   void dispose() {
@@ -23,15 +31,151 @@ class _ContactsScreenState extends State<ContactsScreen> {
     super.dispose();
   }
 
-  void _showCallingNotice(String type) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$type calling will be available in the calling module.'),
-        duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+  Future<void> _startAudioCall(UserModel receiver) async {
+    if (_isStartingCall) return;
+    setState(() => _isStartingCall = true);
+
+    try {
+      final hasInternet = await NetworkHelper.hasInternetConnection();
+      if (!hasInternet) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No internet connection. Please check your network and try again.'),
+              backgroundColor: AppTheme.errorColor,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      final permResult = await PermissionHelper.checkAndRequestCallPermissions(isVideo: false);
+      if (!permResult.isGranted) {
+        if (mounted) {
+          PermissionHelper.handlePermissionResult(context, permResult);
+        }
+        return;
+      }
+
+      final currentUser = _authService.currentUser ?? await _authService.checkAuthState();
+      if (currentUser == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('User session not found. Please log in again.'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+        return;
+      }
+
+      final call = await CallSignalingService().initiateCall(
+        caller: currentUser,
+        receiver: receiver,
+        type: CallType.audio,
+      );
+
+      if (!mounted) return;
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AudioCallingScreen(
+            call: call,
+            isCaller: true,
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Error starting audio call: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to place call: $e'),
+          backgroundColor: AppTheme.errorColor,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isStartingCall = false);
+      }
+    }
   }
+
+  Future<void> _startVideoCall(UserModel receiver) async {
+    if (_isStartingCall) return;
+    setState(() => _isStartingCall = true);
+
+    try {
+      final hasInternet = await NetworkHelper.hasInternetConnection();
+      if (!hasInternet) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No internet connection. Please check your network and try again.'),
+              backgroundColor: AppTheme.errorColor,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      final permResult = await PermissionHelper.checkAndRequestCallPermissions(isVideo: true);
+      if (!permResult.isGranted) {
+        if (mounted) {
+          PermissionHelper.handlePermissionResult(context, permResult);
+        }
+        return;
+      }
+
+      final caller = _authService.currentUser;
+      if (caller == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Please log in to start a call.')),
+          );
+        }
+        return;
+      }
+
+      final callDoc = await CallSignalingService().initiateCall(
+        caller: caller,
+        receiver: receiver,
+        type: CallType.video,
+      );
+
+      if (!mounted) return;
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => VideoCallingScreen(
+            call: callDoc,
+            isCaller: true,
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Error starting video call: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to place video call: $e'),
+          backgroundColor: AppTheme.errorColor,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isStartingCall = false);
+      }
+    }
+  }
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -82,6 +226,47 @@ class _ContactsScreenState extends State<ContactsScreen> {
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
+                }
+
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32.0),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.error_outline_rounded,
+                            size: 56,
+                            color: Colors.red.shade400,
+                          ),
+                          const SizedBox(height: 16),
+                          const Text(
+                            'Failed to load contacts',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '${snapshot.error}',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          TextButton.icon(
+                            onPressed: () => setState(() {}),
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Retry'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
                 }
 
                 final users = snapshot.data ?? [];
@@ -159,8 +344,8 @@ class _ContactsScreenState extends State<ContactsScreen> {
                           final user = filteredUsers[index];
                           return UserTile(
                             user: user,
-                            onAudioCall: () => _showCallingNotice('Audio'),
-                            onVideoCall: () => _showCallingNotice('Video'),
+                            onAudioCall: _isStartingCall ? null : () => _startAudioCall(user),
+                            onVideoCall: _isStartingCall ? null : () => _startVideoCall(user),
                           );
                         },
                       ),

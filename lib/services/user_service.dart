@@ -111,6 +111,20 @@ class UserService {
     }
   }
 
+  /// Stream a single user profile in real-time
+  Stream<UserModel?> getUserStream(String userId) {
+    if (!isFirebaseInitialized) return const Stream.empty();
+
+    return _usersCollection.doc(userId).snapshots().map((doc) {
+      if (!doc.exists || doc.data() == null) return null;
+      return UserModel.fromMap({
+        ...doc.data()!,
+        'id': doc.id,
+        'uid': doc.id,
+      });
+    });
+  }
+
   /// Update user profile details
   Future<void> updateUserProfile(UserModel user) async {
     if (!isFirebaseInitialized) return;
@@ -119,6 +133,28 @@ class UserService {
       await _usersCollection.doc(user.id).update(user.toMap());
     } catch (e) {
       debugPrint('Error updating user profile: $e');
+      rethrow;
+    }
+  }
+
+  /// Update profile fields (name, avatarUrl) in Firestore and sync with Firebase Auth
+  Future<void> updateProfile({
+    required String userId,
+    required String name,
+    String? avatarUrl,
+  }) async {
+    if (!isFirebaseInitialized) return;
+
+    try {
+      final updates = <String, dynamic>{
+        'name': name.trim(),
+        'avatarUrl': avatarUrl?.trim().isNotEmpty == true ? avatarUrl!.trim() : null,
+      };
+
+      await _usersCollection.doc(userId).update(updates);
+    } catch (e) {
+      debugPrint('Error updating profile in UserService: $e');
+      rethrow;
     }
   }
 }

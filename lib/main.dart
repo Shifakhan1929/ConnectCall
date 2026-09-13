@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'core/constants/app_constants.dart';
 import 'core/theme/app_theme.dart';
 import 'firebase_options.dart';
+import 'models/call_model.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/register_screen.dart';
 import 'screens/call/call_screen.dart';
@@ -48,7 +49,10 @@ class ConnectCallApp extends StatelessWidget {
         AppConstants.contactsRoute: (context) => const ContactsScreen(),
         AppConstants.profileRoute: (context) => const ProfileScreen(),
         AppConstants.callRoute: (context) => const CallScreen(),
-        AppConstants.incomingCallRoute: (context) => const IncomingCallScreen(),
+        AppConstants.incomingCallRoute: (context) {
+          final call = ModalRoute.of(context)?.settings.arguments as CallModel?;
+          return IncomingCallScreen(call: call);
+        },
         AppConstants.historyRoute: (context) => const CallHistoryScreen(),
       },
     );

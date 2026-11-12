@@ -280,11 +280,4 @@ Verification was executed between two physical Android devices:
 
 ---
 
-## 14. AI Tools Used
 
-AI-assisted coding and agentic pair-programming were utilized during the development of this project for:
-- Initial project scaffolding, architecture planning, and boilerplate generation.
-- Diagnostic log analysis of the Agora RTC audio pipeline and Android hardware routing.
-- Crafting defensive error handling, double-tap prevention, and permission workflows.
-
-All AI-assisted implementations were thoroughly reviewed, refactored to align with Flutter best practices, validated against static analysis (`flutter analyze`), verified through unit tests (`flutter test`), and tested on physical Android devices.
